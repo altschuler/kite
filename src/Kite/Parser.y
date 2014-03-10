@@ -2,10 +2,18 @@
 module Kite.Parser where
 import Kite.Lexer
 import Text.Printf
+
+lexwrap cont = do
+  token <- alexMonadScan
+  cont token
 }
 
 %name kiteparser
+%error { parseError }
 %tokentype { Token }
+
+%lexer  { lexwrap } { alexEOF }
+%monad { Alex }
 
 %token
         int                { Integer _ $$ }
@@ -148,8 +156,12 @@ Term    : int              { PInteger $1 }
 
 {
 
+-- mkTok (Integer _ v) = return $ PInteger v
+-- mkTok ( _ v)  = return $ PInteger v
+
 -- error handling
-happyError (x:xs) = error $ "Parse error: " ++ (show . posn2str . tok2posn) x
+parseError :: Token -> Alex a
+parseError tok = fail $ "Parse error: " ++ show (tok2posn tok)
 
 posn2str (AlexPn _ line col) = "line " ++ show line ++ ", column " ++ show col
 

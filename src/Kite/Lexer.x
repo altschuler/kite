@@ -2,7 +2,7 @@
 module Kite.Lexer where
 }
 
-%wrapper "posn"
+%wrapper "monad"
 
 $downcase		= a-z
 $upcase			= A-Z
@@ -26,25 +26,52 @@ kite :-
   @multilineComment	;
   @comment		;
 
-  @keywords		{ tok (\p s -> Keyword p s) }
-  @operators		{ tok (\p s -> Operator p s) }
-  @binops		{ tok (\p s -> BinOp p s) }
+  @keywords		{ tok LKeyword }
+  @operators		{ tok LOperator }
+  @binops		{ tok LBinOp }
 
-  $digit+\.$digit+	{ tok (\p s -> Float p (read s)) }
-  $digit+		{ tok (\p s -> Integer p (read s)) }
-  @bool		        { tok (\p s -> Bool p (read s)) }
-  $symbols		{ tok (\p s -> Symbol p (head s)) }
+  $digit+\.$digit+	{ tok LFloat }
+  $digit+		{ tok LInteger }
+  @bool		        { tok LBool }
+  $symbols		{ tok LSymbol }
 
-  @string               { tok (\p s -> String p $ (tail . init) s) }
-  @identifier		{ tok (\p s -> Identifier p s) }
-  @type			{ tok (\p s -> Type p s) }
+  @string               { tok LString }
+  @identifier		{ tok LIdentifier }
+  @type			{ tok LType }
 
 {
 
-tok f p s = f p s
+data Lexeme = LSymbol
+            | LIdentifier
+            | LType
+            | LInteger
+            | LFloat
+            | LBool
+            | LString
+            | LKeyword
+            | LOperator
+            | LBinOp
+            | LEOF
+            deriving (Show, Eq)
 
--- alexEOF :: Alex Token
--- alexEOF = return EOF
+tok :: Lexeme -> AlexInput -> Int -> Alex Token
+tok c (pn, _, _, str) len =
+  let val = take len str
+  in case c of
+    LSymbol ->      return $ Symbol     pn (head val)
+    LIdentifier ->  return $ Identifier pn val
+    LType ->        return $ Type       pn val
+    LInteger ->     return $ Integer    pn (read val :: Int)
+    LFloat ->       return $ Float      pn (read val :: Float)
+    LBool ->        return $ Bool       pn (read val :: Bool)
+    LString ->      return $ String     pn val
+    LKeyword ->     return $ Keyword    pn val
+    LOperator ->    return $ Operator   pn val
+    LBinOp ->       return $ BinOp      pn val
+    LEOF ->         return $ EOF
+
+alexEOF :: Alex Token
+alexEOF = return EOF
 
 data Token = Symbol     AlexPosn Char
            | Identifier AlexPosn String
@@ -56,8 +83,8 @@ data Token = Symbol     AlexPosn Char
            | Keyword    AlexPosn String
            | Operator   AlexPosn String
            | BinOp      AlexPosn String
-           | EOF        AlexPosn
-           deriving (Eq,Show)
+           | EOF
+           deriving (Eq, Show)
 
 -- get the AlexPosn from a token
 tok2posn (Symbol     p _) = p
@@ -70,5 +97,5 @@ tok2posn (Bool       p _) = p
 tok2posn (Keyword    p _) = p
 tok2posn (Operator   p _) = p
 tok2posn (BinOp      p _) = p
-tok2posn (EOF        p  ) = p
+--tok2posn (EOF        p  ) = p
 }
