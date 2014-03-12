@@ -3,6 +3,7 @@ module Main where
 
 import Kite.Lexer
 import Kite.Parser
+import Kite.Driver
 import Kite.TypeCheck
 
 import System.Console.CmdArgs
@@ -28,6 +29,7 @@ main = do
   inp <- if eval then return input else readFile input
   when lexOutput $ (putStrLn . ppShow . alexScanTokens) inp
   let ast = (kiteparser . alexScanTokens) inp
+  _ <- process ast
   when parOutput $ (putStrLn . ppShow) ast
   case typeCheck ast of
     Right _ -> print "Type check passed"
