@@ -1,10 +1,19 @@
 language: haskell
 
+before_install:
+
+
+  - sudo sudo sh -c "echo 'deb http://llvm.org/apt/precise/ llvm-toolchain-precise-3.4 main' >> /etc/apt/sources.list"
+  - sudo sudo sh -c "echo 'deb-src http://llvm.org/apt/precise/ llvm-toolchain-precise-3.4 main' >> /etc/apt/sources.list"
+  - wget -O - http://llvm.org/apt/llvm-snapshot.gpg.key | sudo apt-key add -
+  - sudo apt-get update -qq
+  - sudo apt-get install -qq llvm-3.4 llvm-3.4-dev
+
 install:
-  cabal install alex happy cmdargs tasty tasty-hunit pretty-show
+  - cabal install alex happy cmdargs tasty tasty-hunit pretty-show llvm-general llvm-general-pure
 
 script:
-  make
+  - make
 
 notifications:
   hipchat:
