@@ -1,19 +1,16 @@
 {
 module Kite.Parser where
+
 import Kite.Lexer
 import Text.Printf
-
-lexwrap cont = do
-  token <- alexMonadScan
-  cont token
 }
 
-%name kiteparser
+%name parse
 %error { parseError }
 %tokentype { Token }
 
-%lexer  { lexwrap } { alexEOF }
 %monad { Alex }
+%lexer { lexwrap } { EOF }
 
 %token
         int                { Integer _ $$ }
@@ -89,34 +86,34 @@ Exprs   : {- nothing -}    { [] }
         | Expr ',' Exprs   { $1 : $3 }
 
 -- expression rules
-Call    : id '(' Exprs ')'    { PCall (PIdentifier $1) $3 }
-        | Func '(' Exprs ')'  { PImmCall $1 $3 }
+Call    : id '(' Exprs ')'   { PCall (PIdentifier $1) $3 }
+        | Func '(' Exprs ')' { PImmCall $1 $3 }
 
-Index   : Expr '#' Expr     { PIndex $1 $3 }
+Index   : Expr '#' Expr    { PIndex $1 $3 }
 
 Assign  : id '=' Expr      { PAssign (PIdentifier $1) $3 }
 
 -- differentiate between standard and function blocks
-StandardBlock : '{' Stmts '}'    { PBlock StandardBlock $2 }
+StandardBlock : '{' Stmts '}' { PBlock StandardBlock $2 }
 
-FuncBlock : '{' Stmts '}'    { PBlock FuncBlock $2 }
+FuncBlock : '{' Stmts '}'  { PBlock FuncBlock $2 }
 
 List    : '[' Exprs ']'    { PList $2 }
 
-BinOp   : Expr '+' Expr  { PBinOp "+" $1 $3 }
-        | Expr '-' Expr  { PBinOp "-" $1 $3 }
-        | Expr '*' Expr  { PBinOp "*" $1 $3 }
-        | Expr '/' Expr  { PBinOp "/" $1 $3 }
-        | Expr '%' Expr  { PBinOp "%" $1 $3 }
-        | Expr '==' Expr { PBinOp "==" $1 $3 }
-        | Expr '<' Expr  { PBinOp "<" $1 $3 }
-        | Expr '<=' Expr { PBinOp "<=" $1 $3 }
-        | Expr '>' Expr  { PBinOp ">" $1 $3 }
-        | Expr '>=' Expr { PBinOp ">=" $1 $3 }
-        | Expr '!=' Expr { PBinOp "!=" $1 $3 }
+BinOp   : Expr '+' Expr    { PBinOp "+" $1 $3 }
+        | Expr '-' Expr    { PBinOp "-" $1 $3 }
+        | Expr '*' Expr    { PBinOp "*" $1 $3 }
+        | Expr '/' Expr    { PBinOp "/" $1 $3 }
+        | Expr '%' Expr    { PBinOp "%" $1 $3 }
+        | Expr '==' Expr   { PBinOp "==" $1 $3 }
+        | Expr '<' Expr    { PBinOp "<" $1 $3 }
+        | Expr '<=' Expr   { PBinOp "<=" $1 $3 }
+        | Expr '>' Expr    { PBinOp ">" $1 $3 }
+        | Expr '>=' Expr   { PBinOp ">=" $1 $3 }
+        | Expr '!=' Expr   { PBinOp "!=" $1 $3 }
 
 
-Func    : FuncDef FuncBlock    { PFunc $1 $2 }
+Func    : FuncDef FuncBlock { PFunc $1 $2 }
 
 Type    : boolTy           { PBoolType }
         | intTy            { PIntegerType }
@@ -156,15 +153,6 @@ Term    : int              { PInteger $1 }
 
 {
 
--- mkTok (Integer _ v) = return $ PInteger v
--- mkTok ( _ v)  = return $ PInteger v
-
--- error handling
-parseError :: Token -> Alex a
-parseError tok = fail $ "Parse error: " ++ show (tok2posn tok)
-
-posn2str (AlexPn _ line col) = "line " ++ show line ++ ", column " ++ show col
-
 data BlockType = StandardBlock
                | FuncBlock
                deriving (Show, Eq)
@@ -200,12 +188,31 @@ data Term = PInteger Int
           deriving (Show, Eq)
 
 instance Show Type where
-  show (PListType ty)        = printf "List %s" $ show ty
-  show (PFuncType [] ty)     = printf "Func [] %s" $ show ty
+  show (PListType ty)        = printf "List %s" (show ty)
+  show (PFuncType [] ty)     = printf "Func [] %s" (show ty)
   show (PFuncType (x:xs) ty) = printf "Func [%s] %s" (show x) (show ty)
   show PBoolType             = "Bool"
   show PIntegerType          = "Int"
   show PFloatType            = "Float"
   show PStringType           = "String"
   show (PTypeArg ty te)      = printf "TypeArg %s %s" (show ty) (show te)
+
+getPosn :: Alex (Int,Int)
+getPosn = do
+  (AlexPn _ l c,_,_,_) <- alexGetInput
+  return (l,c)
+
+parseError :: Token -> Alex a
+parseError t = do
+  (l,c) <- getPosn
+  fail (show l ++ ":" ++ show c ++ ": Parse error on Token: " ++ show t ++ "\n")
+
+parseExp :: String -> Either String Expr
+parseExp s = runAlex s parse
+
+readExp :: FilePath -> IO (Either String Expr)
+readExp fp = do
+  cs <- readFile fp
+  return (parseExp cs)
+
 }

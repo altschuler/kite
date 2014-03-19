@@ -1,5 +1,15 @@
 {
-module Kite.Lexer where
+module Kite.Lexer
+( Alex(..)
+, AlexPosn(..)
+, Token(..)
+, alexMonadScan
+, runAlex
+, alexGetInput
+, lexwrap
+) where
+
+import Prelude hiding (lex)
 }
 
 %wrapper "monad"
@@ -41,61 +51,63 @@ kite :-
 
 {
 
-data Lexeme = LSymbol
-            | LIdentifier
-            | LType
-            | LInteger
-            | LFloat
-            | LBool
-            | LString
-            | LKeyword
-            | LOperator
-            | LBinOp
-            | LEOF
-            deriving (Show, Eq)
+data Lexeme
+  = LSymbol
+  | LIdentifier
+  | LType
+  | LInteger
+  | LFloat
+  | LBool
+  | LString
+  | LKeyword
+  | LOperator
+  | LBinOp
+  | LEOF
+  deriving (Show, Eq)
 
-tok :: Lexeme -> AlexInput -> Int -> Alex Token
-tok c (pn, _, _, str) len =
+data Token
+  = Symbol     Char
+  | Identifier String
+  | Type       String
+  | Integer    Int
+  | Float      Float
+  | Bool       Bool
+  | String     String
+  | Keyword    String
+  | Operator   String
+  | BinOp      String
+  | EOF
+  deriving (Eq, Show)
+
+tok :: Lexeme -> Int -> AlexAction Token
+tok c f (_, _, _, str) len =
   let val = take len str
   in case c of
-    LSymbol ->      return $ Symbol     pn (head val)
-    LIdentifier ->  return $ Identifier pn val
-    LType ->        return $ Type       pn val
-    LInteger ->     return $ Integer    pn (read val :: Int)
-    LFloat ->       return $ Float      pn (read val :: Float)
-    LBool ->        return $ Bool       pn (read val :: Bool)
-    LString ->      return $ String     pn val
-    LKeyword ->     return $ Keyword    pn val
-    LOperator ->    return $ Operator   pn val
-    LBinOp ->       return $ BinOp      pn val
-    LEOF ->         return $ EOF
+    LSymbol     ->  return $ Symbol     (head val)
+    LIdentifier ->  return $ Identifier val
+    LType       ->  return $ Type       val
+    LInteger    ->  return $ Integer    (read val :: Int)
+    LFloat      ->  return $ Float      (read val :: Float)
+    LBool       ->  return $ Bool       (read val :: Bool)
+    LString     ->  return $ String     val
+    LKeyword    ->  return $ Keyword    val
+    LOperator   ->  return $ Operator   val
+    LBinOp      ->  return $ BinOp      val
+    LEOF        ->  return $ EOF
 
-alexEOF :: Alex Token
+-- called by parser
+lexwrap :: (Token -> Alex a) -> Alex a
+lexwrap = (alexMonadScan >>=)
 alexEOF = return EOF
 
-data Token = Symbol     AlexPosn Char
-           | Identifier AlexPosn String
-           | Type       AlexPosn String
-           | Integer    AlexPosn Int
-           | Float      AlexPosn Float
-           | Bool       AlexPosn Bool
-           | String     AlexPosn String
-           | Keyword    AlexPosn String
-           | Operator   AlexPosn String
-           | BinOp      AlexPosn String
-           | EOF
-           deriving (Eq, Show)
+-- Unfortunately, we have to extract the matching bit of string
+-- ourselves...
+lex :: (String -> a) -> AlexAction a
+lex f = \(_,_,_,s) i -> return (f (take i s))
 
--- get the AlexPosn from a token
-tok2posn (Symbol     p _) = p
-tok2posn (Identifier p _) = p
-tok2posn (Type       p _) = p
-tok2posn (Integer    p _) = p
-tok2posn (Float      p _) = p
-tok2posn (String     p _) = p
-tok2posn (Bool       p _) = p
-tok2posn (Keyword    p _) = p
-tok2posn (Operator   p _) = p
-tok2posn (BinOp      p _) = p
---tok2posn (EOF        p  ) = p
+-- For constructing tokens that do not depend on
+-- the input
+lex' :: a -> AlexAction a
+lex' = lex . const
+
 }
