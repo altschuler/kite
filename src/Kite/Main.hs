@@ -26,11 +26,12 @@ kiteArgs = cmdArgsMode $ KiteArgs {
 
 main = do
   KiteArgs {..} <- cmdArgsRun kiteArgs
+
   inp <- if eval then return input else readFile input
   when lexOutput $ (putStrLn . ppShow . alexScanTokens) inp
+
   let ast = (kiteparser . alexScanTokens) inp
   _ <- process ast
   when parOutput $ (putStrLn . ppShow) ast
-  case typeCheck ast of
-    Right _ -> print "Type check passed"
-    Left err -> putStrLn $ "Type error: " ++ show err
+
+  either print (const $ print "Type check passed") (typeCheck ast)

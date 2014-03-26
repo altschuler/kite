@@ -1,11 +1,66 @@
 ;;; kite-mode.el --- Minor mode for editing kite source code
-;; Version: 0.1.2
+;; Version: 0.2.0
 ;;
 ;;; Commentary:
-;; Provides the 'kite-mode' mode which does syntax
-;; highlighting for the kite programming language
+;; Provides the 'kite-mode' mode which does syntax highlighting
+;; and compilation facilities for the Kite programming language
 ;;
 ;;; Code:
+
+(defvar kite-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "C-c C-c") 'kite-compile-current-buffer)
+    (define-key map (kbd "C-c C-p C-c")
+      (lambda () (interactive) (kite-compile-current-buffer "-p")))
+    (define-key map (kbd "C-c C-r") 'kite-compile-region)
+    (define-key map (kbd "C-c C-p C-r")
+      (lambda (start end) (interactive "r") (kite-compile-region start end "-p")))
+    map)
+  "Keymap for Kite major mode.")
+
+(defcustom kite-compiled-buffer-name "*kite-compiled*"
+  "The name of the scratch buffer used for compiled Kite source."
+  :type 'string
+  :group 'kite)
+
+(defcustom kite-command "kite"
+  "The command used to compile Kite source code."
+  :type 'string
+  :group 'kite)
+
+(defun kite-compile-current-buffer (&rest args)
+  "Compile current buffer and show output in buffer named `kite-compiled-buffer-name'."
+  (interactive)
+  (save-excursion
+    (apply #'kite-compile-region (point-min) (point-max) args)))
+
+(defun kite-compile-region (start end &rest args)
+  "Compile current region and show output in buffer named `kite-compiled-buffer-name'."
+  (interactive "r")
+
+  (get-buffer-create kite-compiled-buffer-name)
+
+  (let ((result (shell-command-to-string
+                 (format "%s -e %s"
+                         (concatenate 'string kite-command " " (mapconcat 'identity args " "))
+                         (shell-quote-argument (buffer-substring start end)))))
+        (buffer (get-buffer kite-compiled-buffer-name)))
+
+    (display-buffer buffer)
+
+    (with-current-buffer buffer
+      (erase-buffer)
+      (insert result)))
+
+  (message "Kite finished"))
+
+;; Menu bar
+
+(easy-menu-define coffee-mode-menu kite-mode-map
+  "Menu for Kite mode"
+  '("Kite"
+    ["Compile File" kite-compile-current-buffer]
+    ))
 
 ;; keywords
 (defvar kite-keywords
