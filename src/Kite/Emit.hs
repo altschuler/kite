@@ -20,14 +20,43 @@ import Debug.Trace
 import Kite.CodeGen
 import Kite.Parser
 
+getArgType arg = case arg of
+  PIntegerType -> integer
+  PFloatType -> float
 
-toSig :: [String] -> [(AST.Type, AST.Name)]
-toSig = map (\x -> (double, AST.Name x))
+wrapArgs :: [Type] -> [(AST.Type, AST.Name)]
+wrapArgs = map (\(PTypeArg ty (PIdentifier iden)) -> (getArgType ty, AST.Name iden))
 
 codegenTop :: Expr -> LLVM ()
 
-codegenTop (PAssign (PIdentifier iden) exp) =
-  define integer iden [] []
+codegenTop (PAssign (PIdentifier iden) (PFunc (PFuncType args _) body)) =
+  define double iden fnargs bls
+  where
+    fnargs = wrapArgs args
+    bls = createBlocks $ execCodegen $ do
+      entry <- addBlock entryBlockName
+      setBlock entry
+      forM_ args $ \(PTypeArg ty (PIdentifier iden)) -> do
+        var <- alloca  $ getArgType ty
+        store var (local (AST.Name iden))
+        assign iden var
+      cgen body >>= ret
+
+-- codegenTop (PFunc _ _) =
+--   define
+
+-- codegenTop (PFunc (PFuncType args _) body) = do
+--   define double "hei" fnargs bls
+--   where
+--     fnargs = wrapArgs args
+--     bls = createBlocks $ execCodegen $ do
+--       entry <- addBlock entryBlockName
+--       setBlock entry
+--       forM_ args $ \(PTypeArg ty (PIdentifier iden)) -> do
+--         var <- alloca  $ getArgType ty
+--         store var (local (AST.Name iden))
+--         assign iden var
+--       cgen body >>= ret
 
 codegenTop expr =
   define integer "main" [] blks
@@ -43,7 +72,35 @@ codegenTop expr =
 
 cgen :: Expr -> Codegen AST.Operand
 
-cgen expr = traceShow expr $ error "trace"
+-- cgen (PUnaryOp op a) = cgen $ PCall ("unary" ++ op) [a]
+
+-- cgen (PBinOp "=" (PVar var) val) = do
+--   a <- getvar var
+--   cval <- cgen val
+--   store a cval
+--   return cval
+
+-- cgen (PBinOp op a b) =
+--   case Map.lookup op binops of
+--     Just f  -> do
+--       ca <- cgen a
+--       cb <- cgen b
+--       f ca cb
+--     Nothing -> error "No such operator"
+
+cgen (PIdentifier iden) = getvar iden >>= load
+
+cgen (PInteger n) = return $ cons $ C.Int 32 $ toInteger n
+
+-- cgen (PFloat n) = return $ cons $ C.Float (F.Double n)
+
+-- cgen (PCall fn args) = do
+--   largs <- mapM cgen args
+--   call (externf (AST.Name fn)) largs
+
+
+cgen expr = return $ cons $ C.Int 32 $ toInteger 1
+            --traceShow expr $ error "trace"
 
 -------------------------------------------------------------------------------
 -- Compilation

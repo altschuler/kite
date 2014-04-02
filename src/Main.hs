@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveDataTypeable, RecordWildCards, NoMonomorphismRestriction #-}
 module Main where
 
+import Kite.LLVMDriver
 import qualified Kite.Driver as Kt
 
 import System.Console.CmdArgs
@@ -32,8 +33,13 @@ main = do
   when lexOutput (prettyPrint tokens)
 
   let ast = Kt.parse tokens
-  when parOutput (prettyPrint ast)
+  when parOutput (prettyPrint ast >> putStrLn "")
 
-  either print (const $ print "Type check passed") (Kt.analyze debugOutput ast)
+  case Kt.analyze debugOutput ast of
+    Right _ -> do
+      putStrLn "Type check passed\n"
+      process ast
+      return ()
+    Left err -> print err
 
     where prettyPrint = putStrLn . ppShow

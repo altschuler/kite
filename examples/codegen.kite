@@ -1,2 +1,2 @@
 --a = 2
-b = (a:Int) -> Int { return a }
+bae = |a:Int, b:Float| -> Int { return 1 }
