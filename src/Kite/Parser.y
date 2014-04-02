@@ -32,6 +32,7 @@ import Text.Printf
         '>='               { TBinOp _ ">=" }
         '!='               { TBinOp _ "!=" }
 
+        import             { TKeyword _ "import" }
         return             { TKeyword _ "return" }
         if                 { TKeyword _ "if" }
         then               { TKeyword _ "then" }
@@ -41,6 +42,8 @@ import Text.Printf
         '='                { TOperator _ "=" }
         '#'                { TOperator _ "#" }
         '->'               { TOperator _ "->" }
+        '|'                { TOperator _ "|" }
+        '`'                { TOperator _ "`" }
 
         '('                { TSymbol _ '(' }
         ')'                { TSymbol _ ')' }
@@ -91,8 +94,8 @@ Exprs   : {- nothing -}    { [] }
 
 -- expression rules
 Call   :: { Expr }
-        : id '(' Exprs ')'    { PCall (PIdentifier $1) $3 }
-        | Func '(' Exprs ')'  { PImmCall $1 $3 }
+        : Expr '(' Exprs ')'    { PCall $1 $3 }
+        | Expr '`' Expr Expr    { PCall $3 [$1, $4] }
 
 Index  :: { Expr }
         : Expr '#' Expr     { PIndex $1 $3 }
@@ -111,20 +114,17 @@ List   :: { Expr }
 List    : '[' Exprs ']'    { PList $2 }
 
 BinOp  :: { Expr }
-        : Expr '+' Expr  { PBinOp "+" $1 $3 }
-        | Expr '-' Expr  { PBinOp "-" $1 $3 }
-        | Expr '*' Expr  { PBinOp "*" $1 $3 }
-        | Expr '/' Expr  { PBinOp "/" $1 $3 }
-        | Expr '%' Expr  { PBinOp "%" $1 $3 }
-        | Expr '==' Expr { PBinOp "==" $1 $3 }
-        | Expr '<' Expr  { PBinOp "<" $1 $3 }
-        | Expr '<=' Expr { PBinOp "<=" $1 $3 }
-        | Expr '>' Expr  { PBinOp ">" $1 $3 }
-        | Expr '>=' Expr { PBinOp ">=" $1 $3 }
-        | Expr '!=' Expr { PBinOp "!=" $1 $3 }
-
-Func   :: { Expr }
-        : FuncDef FuncBlock    { PFunc $1 $2 }
+        : Expr '+' Expr  { PCall (PIdentifier "+") [$1, $3] }
+        | Expr '-' Expr  { PCall (PIdentifier "-") [$1, $3] }
+        | Expr '*' Expr  { PCall (PIdentifier "*") [$1, $3] }
+        | Expr '/' Expr  { PCall (PIdentifier "/") [$1, $3] }
+        | Expr '%' Expr  { PCall (PIdentifier "%") [$1, $3] }
+        | Expr '==' Expr { PCall (PIdentifier "==") [$1, $3] }
+        | Expr '<' Expr  { PCall (PIdentifier "<") [$1, $3] }
+        | Expr '<=' Expr { PCall (PIdentifier "<=") [$1, $3] }
+        | Expr '>' Expr  { PCall (PIdentifier ">") [$1, $3] }
+        | Expr '>=' Expr { PCall (PIdentifier ">=") [$1, $3] }
+        | Expr '!=' Expr { PCall (PIdentifier "!=") [$1, $3] }
 
 Type   :: { Type }
         : boolTy           { PBoolType }
@@ -135,35 +135,40 @@ Type   :: { Type }
         | FuncType         { $1 }
         | id               { PFreeType $1 }
 
-TypeArg :: { Type }
-         : id ':' Type     { PTypeArg $3 (PIdentifier $1) }
-         | id ':'          { PTypeArg (PFreeType "t") (PIdentifier $1) }
-
 -- support both single expr and blocks
 If     :: { Expr }
         : if Expr then Expr else Expr    { PIf $2 $4 $6 }
         | if Expr then StandardBlock else StandardBlock  { PIf $2 $4 $6 }
 
+-- functions
+Func   :: { Expr }
+        : FuncSignature FuncBlock        { PFunc $1 $2 }
+
 -- func literal
-FuncDef :: { Type }
-         : '(' ParamList ')' '->' { PFuncType $2 (PFreeType "t") }
-         | '(' ParamList ')' '->' Type { PFuncType $2 $5 }
+FuncSignature :: { Type }
+         : '|' Parameters '|' '->'       { PFuncType $2 (PFreeType "t") }
+         | '|' Parameters '|' '->' Type  { PFuncType $2 $5 }
 
 -- named arguments
-ParamList :: { [Type] }
-           : {- nothing -}           { [] }
-           | TypeArg                 { [$1] }
-           | TypeArg ',' ParamList   { $1 : $3 }
+Parameters :: { [Type] }
+           : {- nothing -}             { [] }
+           | Parameter                 { [$1] }
+           | Parameter ',' Parameters  { $1 : $3 }
+
+-- func literal parameter
+Parameter :: { Type }
+         : id              { PTypeArg (PFreeType "t") (PIdentifier $1) }
+         | id ':' Type     { PTypeArg $3 (PIdentifier $1) }
 
 -- func signature
 FuncType  :: { Type }
-           : '(' TypeList ')' '->' Type { PFuncType $2 $5 }
+           : '|' TypeList '|' '->' Type { PFuncType $2 $5 }
 
 -- just type
 TypeList :: { [Type] }
-          : {- nothing -}    { [] }
-          | Type             { [$1] }
-          | Type ',' TypeList   { $1 : $3 }
+          : {- nothing -}      { [] }
+          | Type               { [$1] }
+          | Type ',' TypeList  { $1 : $3 }
 
 -- primitive types
 Term     :: { Expr }
@@ -184,14 +189,12 @@ data BlockType = StandardBlock
                | FuncBlock
                deriving (Show, Eq)
 
-data Expr = PBinOp String Expr Expr -- Operator!
-          | PList [Expr]
+data Expr = PList [Expr]
           | PBlock BlockType [Expr]
           | PIf Expr Expr Expr
           | PAssign Expr Expr -- PIdentifier!
           | PFunc Type Expr -- PFuncType!
           | PCall Expr [Expr] -- PIdentifier!
-          | PImmCall Expr [Expr] -- PIdentifier!
           | PReturn Expr
           | PIndex Expr Expr
 

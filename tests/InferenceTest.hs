@@ -26,7 +26,7 @@ nullEnvironment = Environment { sym = [Map.empty],
                                 symCount = 0 }
 
 parse prog = do
-  env <- case (typeCheck . kiteparser . alexScanTokens) prog of
+  env <- case (typeCheck False . kiteparser . alexScanTokens) prog of
     Right env' -> return env'
     Left err -> error (show err) >> return nullEnvironment
   Map.assocs $ head (sym env)
@@ -38,7 +38,7 @@ test name prog ex  = testCase name $ case Map.lookup (fst ex) (Map.fromList (par
 
 -- test env with basic types and/or simple functions
 base = "yes = True; one = 1; half = 0.5; str = \"foo\";"
-extra = base ++ "id = (x) -> { return x };"
+extra = base ++ "id = |x| -> { return x };"
 
 testEnv name prog ex = test name (base ++ prog) ex
 testExt name prog ex = testEnv name (extra ++ prog) ex
@@ -72,18 +72,45 @@ inferenceTests = testGroup "Inference test"
       ("ls", ls int)
 
     , test "Infer type of index expr"
-      "head = (xs) -> { return xs # 0 }"
+      "head = |xs| -> { return xs # 0 }"
       --TODO: fix these tx vars, it's impossible to track
-      ("head", fn [ls (free "t1")] (free "t1"))
+      ("head", fn [ls (free "t4")] (free "t4"))
     ]
 
   , testGroup "Function"
     [ test "Simple function"
-      "id = (e) -> { return e }"
-      ("id", fn [free "t1"] (free "t1"))
+      "id = |e| -> { return e }"
+      ("id", fn [free "t2"] (free "t2"))
 
     , testExt "Apply polymorhpic function to value"
-      "foo = id (2)"
+      "foo = id(2)"
       ("foo", int)
+    ]
+
+  , testGroup "Higher order functions"
+    [ test "Free function and free param"
+      "apply = |f, x| -> { return f(x) }"
+      ("apply", fn [fn [free "t3"] (free "t5"), free "t3"] (free "t5"))
+
+    , test "Free function and free param"
+      "apply = |f, x| -> { return f(x) }\
+      \fn =  |x| -> { return [x] }\
+      \val = apply(fn, 1)"
+      ("apply", fn [fn [free "t3"] (free "t5"), free "t3"] (free "t5"))
+
+
+    , testExt "Application of returned function (HoF)"
+      "id = |x| -> { return x}\
+      \one = id(|x| -> { return x})(1)"
+      ("one", int)
+
+    , testExt "Multiple nested applications of returned functions (HoF)"
+      "id = |x| -> { return x }\
+      \one = id(|x| -> { \
+      \    return |y| -> {\
+      \       return x + y\
+      \    }\
+      \})(1)(1)"
+     ("one", int)
     ]
   ]

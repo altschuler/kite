@@ -1,13 +1,16 @@
-module Kite.Driver (process) where
+module Kite.Driver (lex, parse, analyze, kite, kited) where
 
-import Kite.CodeGen
-import Kite.Emit
+import Prelude hiding (lex)
+import Kite.Lexer
+import Kite.Parser
+import Kite.TypeCheck
 
-import qualified Kite.Parser as P
+lex = alexScanTokens
+parse = kiteparser
+analyze = typeCheck
+kite = analyze False . parse . lex
 
-import qualified LLVM.General.AST as AST
-
-initModule :: AST.Module
-initModule = emptyModule "Kite top module"
-
-process = codegen initModule
+kited = analyze True . parse . lex
+kitef file = do
+  inp <- readFile file
+  return $ kite inp

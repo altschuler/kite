@@ -38,13 +38,31 @@ throwAE ide exp got = throwError . ArityError $ printf
 -------------------
 -- INTERFACE
 -------------------
-runTC f = runState (runErrorT f) Environment { sym = [Map.empty],
-                                               symCount = 0 }
+runTC f = runState (runErrorT f) Environment { sym = [initSymbols],
+                                               symCount = Map.size initSymbols }
 
-typeCheck :: Expr -> Either TypeError Environment
-typeCheck expr =
+-- traceShow initSymbols $ return()
+
+stdBinOpArgs = PFuncType [PFreeType "a", PFreeType "a"] (PFreeType "a")
+initSymbols = Map.fromList [("+",stdBinOpArgs),
+                            ("-",stdBinOpArgs),
+                            ("*",stdBinOpArgs),
+                            ("/",stdBinOpArgs),
+                            ("%",stdBinOpArgs),
+                            ("==",stdBinOpArgs),
+                            ("<",stdBinOpArgs),
+                            ("<=",stdBinOpArgs),
+                            (">",stdBinOpArgs),
+                            (">=",stdBinOpArgs),
+                            ("!=",stdBinOpArgs)]
+
+
+
+typeCheck :: Bool -> Expr -> Either TypeError Environment
+typeCheck debug expr = do
   let (r, env) = runTC (typeOf expr)
-  in case r of
+  when debug (traceShow env $ return ())
+  case r of
     Right _ -> Right env
     Left err -> Left err
 
@@ -61,7 +79,7 @@ data Environment = Environment { sym :: Stack,
                                  symCount :: Int}
 
 instance Show Environment where
-  show env = "syms = " ++ show (Map.toList . head . sym $ env)
+  show env = "Top symbol frame\n" ++ foldl (\acc (n, v) -> acc ++ n ++ ":\t" ++ show v ++ "\n") "" (Map.toList . head . sym $ env)
 
 -- the monad in which all the state is kept and errors are thrown
 type TC a = ErrorT TypeError (State Environment) a
@@ -78,7 +96,6 @@ freshFtv ide = do
 -------------------
 -- substitue a type variable into the top symbol frame
 nullSubst = Map.empty
--- TODO: do this real
 composeSubst s1 s2 = s1 `Map.union` s2
 
 applySubstEnv :: Substitution -> TC ()
@@ -145,22 +162,6 @@ overrideSym ide val = do
 -- operators that return bool
 boolOps = ["==", ">", ">=", "<", "<=", "!="]
 
--- arithmic operations look-up
-
-binOpLookup = [(PStringType, "+",PStringType),
-               (PListType PStringType,"+",PListType PStringType),
-               (PListType PIntegerType,"+",PListType PIntegerType),
-               (PListType PFloatType,"+",PListType PFloatType),
-               (PListType PBoolType,"+",PListType PBoolType),
-               (PListType PStringType,"+",PStringType),
-               (PListType PIntegerType,"+", PIntegerType),
-               (PListType PFloatType,"+", PFloatType),
-               (PListType PBoolType,"+", PBoolType),
-               (PStringType,"+",PListType PStringType),
-               (PIntegerType,"+",PListType PIntegerType),
-               (PFloatType,"+",PListType PFloatType),
-               (PBoolType,"+",PListType PBoolType),
-               (PFreeType "","+",PFreeType "")]
 {-
   for floats and integers, all binary operators are allowed
   for booleans only the boolOps are allowed
@@ -169,12 +170,8 @@ binOpLookup = [(PStringType, "+",PStringType),
 -------------------
 -- HELPERS
 -------------------
-extractReturnType rets expr = do
-  ty <- typeOf expr
-  let updatedRets = case expr of
-        PReturn _ -> ty : rets
-        _ -> rets
-  return updatedRets
+isFunc (PFunc _ _) = True
+isFunc _ = False
 
 isListType (PListType _) = True
 isListType _ = False
@@ -239,33 +236,34 @@ typeOf (PBool _)    = return (nullSubst, PBoolType)
 
 -- Compound types
 -------------------
-typeOf (PFunc (PFuncType params retType) body) = do
-  params' <- mapM (\(PTypeArg ty (PIdentifier ide)) -> return (ide, ty)) params
+typeOf (PFunc (PFuncType params rty) body) = do
+  -- generate fresh ftv names for free parameters
+  params' <- mapM (\(PTypeArg ty (PIdentifier ide)) ->
+                    case ty of
+                      PFreeType freeIde -> freshFtv freeIde >>= \t -> return (ide, t)
+                      _ -> return (ide, ty)
+                  ) params
 
-  let paramTypes = map snd params'
+  rty' <- freshIfFree rty
 
   pushSymF (Map.fromList params')
 
-  (s1, bodyRetType) <- typeOf body
+  (s1, bodyTy) <- typeOf body
 
-  applySubstEnv s1
+  s2 <- unify bodyTy rty'
 
   popSymF
 
-  s2 <- unify retType bodyRetType
+  let s = s1 `composeSubst` s2
 
-  applySubstEnv s2
+  return (s, applySubst s (PFuncType (map snd params') bodyTy))
 
-  return (s2, applySubst s2 (PFuncType paramTypes bodyRetType))
-
+{-
 typeOf (PBinOp op lhs rhs) = do
   (s1, tyLhs) <- typeOf lhs
-  applySubstEnv s1
   (s2, tyRhs) <- typeOf rhs
 
   s3 <- unify (applySubst s2 tyLhs) (applySubst s2 tyRhs)
-
-  applySubstEnv s3
 
   let retTy = if op `elem` boolOps then PBoolType else tyLhs
 
@@ -279,6 +277,7 @@ typeOf (PBinOp op lhs rhs) = do
   -- unless (tyLhs == tyRhs || (tyLhs, op, tyRhs) `elem` binOpLookup)
   --   (throwTE $ printf "Binary operand types do not match (%s %s %s)."
   --    (show tyLhs) op (show tyRhs))
+-}
 
 typeOf (PList []) = do
   fresh <- freshFtv "t"
@@ -291,16 +290,12 @@ typeOf (PList (x:xs)) = do
 
             sUnify <- unify t (applySubst s t')
 
-            applySubstEnv sUnify
-
             when (applySubst sUnify t /= applySubst sUnify t')
               (throwTE $ printf "Varying types in list. Got %s(s) and %s(s)."
                (show t) (show t'))
 
             return (s `composeSubst` s', applySubst sUnify t)
         ) (sHead, tHead) xs
-
-  applySubstEnv composedSubst
 
   return (composedSubst, PListType composedType)
 
@@ -312,11 +307,7 @@ typeOf (PIf cond conseq alt) = do
   when (applySubst s1 tyCond /= PBoolType)
     (throwTE $ printf "Expected if-condition to be of type Bool, got %s." (show tyCond))
 
-  applySubstEnv s0
-
   (s2, tyConseq) <- typeOf conseq
-
-  applySubstEnv s2
 
   (s3, tyAlt) <- typeOf alt
 
@@ -328,133 +319,133 @@ typeOf (PIf cond conseq alt) = do
 
   return (s0 `composeSubst` s1 `composeSubst` s2 `composeSubst` s3 `composeSubst` s4, applySubst s4 tyConseq)
 
-typeOf (PAssign (PIdentifier ide) (PFunc (PFuncType params retType) body)) = do
-  -- generate fresh ftvs for all free type variables in func def
-  -- TODO: clean up, it's messy AS FUCK, yo
-  params' <- mapM (\(PTypeArg ty tyIde) ->
-                    case ty of
-                      PFreeType freeIde -> freshFtv freeIde >>= \t -> return (PTypeArg t tyIde)
-                      _ -> return (PTypeArg ty tyIde)
-                  ) params
-  let tyParams = map (\(PTypeArg ty _) -> ty) params'
-  retType' <- freshIfFree retType
-  let func' = PFunc (PFuncType params' retType') body
+-- using let rec for functions
+typeOf (PAssign (PIdentifier ide) val@(PFunc _ _)) = do
+  -- add a ftv for fn types, to allow recursion
+  fresh <- freshFtv "t"
+  insertSym ide fresh
 
-  insertSym ide (PFuncType tyParams retType')
-
-  (_, inferredFuncType) <- typeOf func'
-
-  return (nullSubst, inferredFuncType)
-
-typeOf (PAssign (PIdentifier ide) val) = do
   (s1, tyVal) <- typeOf val
+
+  env <- get
+  let existing = Map.lookup ide (head (sym env))
+  let Just tyExisting = existing
+
+  s2 <- unify tyExisting tyVal
+
+  when (isJust existing && applySubst s2 tyExisting /= applySubst s2 tyVal)
+        (throwTE $ printf "Reassigning variable '%s' of type %s with type %s."
+         ide (show tyExisting) (show tyVal))
+
+  let s3 = s1 `composeSubst` s2
+
+  return (s3, applySubst s3 tyVal)
+
+-- using normal let for everything else
+typeOf (PAssign (PIdentifier ide) val) = do
+  (s, tyVal) <- typeOf val
 
   env <- get
   let existing = Map.lookup ide (head (sym env))
 
   unless (isNothing existing)
-    (let Just tyExisting = existing
-     in when (tyExisting /= tyVal)
-        (throwTE $ printf "Reassigning variable '%s' of type %s with type %s."
-         ide (show tyExisting) (show tyVal)))
+        (let Just tyExisting = existing
+         in when (applySubst s tyExisting /= applySubst s tyVal)
+            (throwTE $ printf "Reassigning variable '%s' of type %s with type %s."
+             ide (show tyExisting) (show tyVal)))
 
-  insertSym ide tyVal
+  insertSym ide (applySubst s tyVal)
 
-  return (s1, tyVal)
+  return (s, applySubst s tyVal)
 
 typeOf (PIndex arr idx) = do
   (s1, tyArr) <- typeOf arr
-
-  applySubstEnv s1
-
   (s2, tyIdx) <- typeOf idx
-
-  applySubstEnv s2
 
   unless (isIntegerType tyIdx)
     (throwTE $ printf "Invalid index type, expected Int, got %s." (show tyIdx))
 
   fresh <- freshFtv "t"
-  s3 <- unify (PListType fresh) tyArr
+  s3 <- unify tyArr (PListType fresh)
 
-  applySubstEnv s3
-
-  let tyArr' = applySubst s3 tyArr
+  let s = s1 `composeSubst` s2 `composeSubst` s3
+      tyArr' = applySubst s tyArr
 
   unless (isListType tyArr')
     (throwTE $ printf "The index operator is only defined for List # Int, got %s # %s"
      (show tyArr') (show tyIdx))
 
   let PListType tyItem = tyArr'
+  --traceShow tyArr' $ return ()
+  return (s, applySubst s tyItem)
 
-  return (nullSubst, tyItem)
-
+-- fold a block and continously update the environment
 typeOf (PBlock StandardBlock exprs) = do
-  foldM_ extractReturnType [] exprs
+  foldM_ (\rets expr -> do
+             (s, ty) <- typeOf expr
+
+             applySubstEnv s
+
+             let updatedRets = case expr of
+                   PReturn _ -> ty : rets
+                   _ -> rets
+
+             return updatedRets
+         ) [] exprs
+
   return (nullSubst, PBoolType)
 
-typeOf (PBlock FuncBlock (x:xs)) = do
-  (s1, t1) <- typeOf x
-
-  (composedSubst, _) <- foldM (\(s, _) el -> do
+typeOf (PBlock FuncBlock exprs) = do
+  (rets, composedSubst) <- foldM (\(rets, s) el -> do
             (s', t') <- typeOf el
 
-            return (s `composeSubst` s', t')
-        ) (s1, t1) xs
+            applySubstEnv s'
 
-  applySubstEnv composedSubst
+            -- save type if it's a return type
+            let rets' = case el of
+                  PReturn _ -> t' : rets
+                  _ -> rets
 
-  -- get all the return types
-  rets <- foldM extractReturnType [] (x:xs)
+            return (rets', s `composeSubst` s')
+        ) ([], nullSubst) exprs
+
+  --applySubstEnv composedSubst
 
   when (null rets)
     (throwTE "Missing return statement.")
 
-  -- apply the new substitutions to them
-  let srets = map (\(_, t') -> applySubst composedSubst t') rets
+  -- unify return types
+  --ss <- unify (rets !! 1) (rets !! 0)
+  let srets = map (applySubst composedSubst) rets
 
   forM_ srets (\ty -> when (ty /= head srets)
+--  forM_ srets (\ty -> when (ty /= head srets)
                 (throwTE "Varying return types in block."))
 
-  return (composedSubst, head srets)
+  --let s' = composedSubst `composeSubst` ss
+  return (composedSubst, applySubst composedSubst (head srets))
 
-typeOf (PImmCall (PFunc (PFuncType params retType) body) args) = do
-  when (length params /= length args) $ throwAE
-    "<anonymous>" (length params) (length args)
-  let frame = Map.fromList $ map (\(PTypeArg ty (PIdentifier ide)) -> (ide, ty)) params
-  pushSymF frame
-  _ <- typeOf body
-  mapM_ (\(arg, param) -> do
-            let (PTypeArg tyParam _) = param
-            (s1, tyArg) <- typeOf arg
-
-            when (tyArg /= tyParam) $ throwTE $ printf
-              "Wrong type of argument. Expected %s, got %s."
-              (show tyParam) (show tyArg)
-        ) (zip args params)
-  return (nullSubst, retType)
-
-typeOf (PCall ident@(PIdentifier ide) args) = do
-  (_, tyFunc) <- typeOf ident
+typeOf (PCall expr args) = do
+  (s1, tyFunc) <- typeOf expr
 
   argTypes <- mapM typeOf args
 
   -- unify function
   fresh <- freshFtv "t"
-  s <- unify tyFunc (PFuncType ((snd . unzip) argTypes) fresh)
+  s2 <- unify tyFunc (PFuncType ((snd . unzip) argTypes) fresh)
 
-  let tyFunc' = applySubst s tyFunc
+  let tyFunc' = applySubst s2 tyFunc
 
   unless (isFuncType tyFunc' && (not . isFree) tyFunc')
-    (throwTE $ printf "Variable '%s' is not a function." ide)
+    (throwTE $ printf "Expression '%s' is not a function." (show tyFunc'))
 
   let (PFuncType params retTy) = tyFunc'
 
   when (length params /= length args)
-    (throwAE ide (length params) (length args))
+    (throwAE (show tyFunc') (length params) (length args))
 
   argSubsts <- foldM (\acc (arg, tyParam) -> do
-            (s2, tyArg) <- typeOf arg
+            (s2', tyArg) <- typeOf arg
 
             s3 <- unify tyArg tyParam
             --TODO:catch the error in unification
@@ -462,12 +453,11 @@ typeOf (PCall ident@(PIdentifier ide) args) = do
               --  ide (show tyParam) (show tyArg))
             --let s3' = s `composeSubst` s3
 
-            return $ acc `composeSubst` s3 `composeSubst` s2
-        ) s (zip args params)
+            return $ acc `composeSubst` s3 `composeSubst` s2'
+        ) s2 (zip args params)
 
-  --traceShow argSubsts $ return ()
-
-  return (nullSubst, applySubst argSubsts retTy)
+  let s = s1 `composeSubst` s2 `composeSubst` argSubsts
+  return (s2, applySubst s retTy)
 
 typeOf (PIdentifier ide) = do
   env <- get
@@ -487,7 +477,6 @@ typeOf (PIdentifier ide) = do
                in if isNothing val
                   then findit xs
                   else val
-
 
 typeOf (PReturn expr) = typeOf expr
 
