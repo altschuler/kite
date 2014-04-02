@@ -9,31 +9,55 @@ import LLVM.General.Module
 import LLVM.General.Context
 
 import qualified LLVM.General.AST as AST
+import qualified LLVM.General.AST.Constant as C
+import qualified LLVM.General.AST.Float as F
+import qualified LLVM.General.AST.FloatingPointPredicate as FP
 
 import Control.Monad.Error
+import qualified Data.Map as Map
+import Debug.Trace
 
 import Kite.CodeGen
-import qualified Kite.Parser as P
+import Kite.Parser
+
 
 toSig :: [String] -> [(AST.Type, AST.Name)]
 toSig = map (\x -> (double, AST.Name x))
 
-codegenTop :: P.Expr -> LLVM ()
---codegenTop (S.PAssign (PIdentifier nm) (PInteger val)) =
-codegenTop _ =
-  define double "foo" [] []
+codegenTop :: Expr -> LLVM ()
 
+codegenTop (PAssign (PIdentifier iden) exp) =
+  define integer iden [] []
 
--- compile
+codegenTop expr =
+  define integer "main" [] blks
+  where
+    blks = createBlocks $ execCodegen $ do
+      entry <- addBlock entryBlockName
+      setBlock entry
+      cgen expr >>= ret
+
+-------------------------------------------------------------------------------
+-- Operations
+-------------------------------------------------------------------------------
+
+cgen :: Expr -> Codegen AST.Operand
+
+cgen expr = traceShow expr $ error "trace"
+
+-------------------------------------------------------------------------------
+-- Compilation
+-------------------------------------------------------------------------------
+
 liftError :: ErrorT String IO a -> IO a
 liftError = runErrorT >=> either fail return
 
-codegen :: AST.Module -> P.Expr -> IO AST.Module
-codegen modu fns = withContext $ \context ->
+codegen :: AST.Module -> Expr -> IO AST.Module
+codegen mod (PBlock StandardBlock fns) = withContext $ \context ->
   liftError $ withModuleFromAST context newast $ \m -> do
     llstr <- moduleLLVMAssembly m
     putStrLn llstr
     return newast
   where
-    modn = codegenTop fns
-    newast = runLLVM modu modn
+    modn    = mapM codegenTop fns
+    newast  = runLLVM mod modn

@@ -20,36 +20,13 @@ import qualified LLVM.General.AST.Attribute as A
 import qualified LLVM.General.AST.CallingConvention as CC
 import qualified LLVM.General.AST.FloatingPointPredicate as FP
 
-double :: Type
-double = FloatingPointType 64 IEEE
 
-type SymbolTable = [(String, Operand)]
+-------------------------------------------------------------------------------
+-- Module Level
+-------------------------------------------------------------------------------
 
-data CodegenState =
-  CodegenState {
-    currentBlock :: Name,
-    blocks :: Map.Map Name BlockState,
-    symtab :: SymbolTable,
-    blockCount :: Int,
-    count :: Word,
-    names :: Names
-    } deriving (Show)
-
-data BlockState =
-  BlockState {
-    idx :: Int,
-    stack :: [Named Instruction],
-    term :: Maybe (Named Terminator)
-    } deriving (Show)
-
-newtype Codegen a = Codegen { runCodegen :: State CodegenState a }
-                  deriving (Functor, Applicative, Monad, MonadState CodegenState)
-
------------------
---    MODULE
------------------
 newtype LLVM a = LLVM { unLLVM :: State AST.Module a }
-               deriving (Functor, Applicative, Monad, MonadState AST.Module)
+  deriving (Functor, Applicative, Monad, MonadState AST.Module )
 
 runLLVM :: AST.Module -> LLVM a -> AST.Module
 runLLVM = flip (execState . unLLVM)
@@ -58,57 +35,154 @@ emptyModule :: String -> AST.Module
 emptyModule label = defaultModule { moduleName = label }
 
 addDefn :: Definition -> LLVM ()
-addDefn def = do
+addDefn d = do
   defs <- gets moduleDefinitions
-  modify (\s -> s { moduleDefinitions = defs ++ [def] })
+  modify $ \s -> s { moduleDefinitions = defs ++ [d] }
 
 define :: Type -> String -> [(Type, Name)] -> [BasicBlock] -> LLVM ()
-define retType label argTypes body = addDefn $
+define retty label argtys body = addDefn $
   GlobalDefinition $ functionDefaults {
-    name = Name label,
-    parameters = ([Parameter ty nm [] | (ty, nm) <- argTypes], False),
-    returnType = retType,
-    basicBlocks = body
-    }
-
-external :: Type -> String -> [(Type, Name)] -> LLVM ()
-external retType label argTypes = addDefn $
-  GlobalDefinition $ functionDefaults {
-    name = Name label,
-    parameters = ([Parameter ty nm [] | (ty, nm) <- argTypes], False),
-    returnType = retType,
-    basicBlocks = []
+    name        = Name label
+  , parameters  = ([Parameter ty nm [] | (ty, nm) <- argtys], False)
+  , returnType  = retty
+  , basicBlocks = body
   }
 
+external ::  Type -> String -> [(Type, Name)] -> LLVM ()
+external retty label argtys = addDefn $
+  GlobalDefinition $ functionDefaults {
+    name        = Name label
+  , parameters  = ([Parameter ty nm [] | (ty, nm) <- argtys], False)
+  , returnType  = retty
+  , basicBlocks = []
+  }
 
--------------
--- BLOCKS
--------------
+---------------------------------------------------------------------------------
+-- Types
+-------------------------------------------------------------------------------
 
-entry :: Codegen Name
-entry = gets currentBlock
+-- Integer
+integer :: Type
+integer = IntegerType 32
+
+-- IEEE 754 Float
+float :: Type
+float = FloatingPointType 32 IEEE
+
+-- IEEE 754 Double
+double :: Type
+double = FloatingPointType 64 IEEE
+
+-------------------------------------------------------------------------------
+-- Names
+-------------------------------------------------------------------------------
+
+type Names = Map.Map String Int
+
+uniqueName :: String -> Names -> (String, Names)
+uniqueName nm ns =
+  case Map.lookup nm ns of
+    Nothing -> (nm,  Map.insert nm 1 ns)
+    Just ix -> (nm ++ show ix, Map.insert nm (ix+1) ns)
+
+instance IsString Name where
+  fromString = Name . fromString
+
+-------------------------------------------------------------------------------
+-- Codegen State
+-------------------------------------------------------------------------------
+
+type SymbolTable = [(String, Operand)]
+
+data CodegenState
+  = CodegenState {
+    currentBlock :: Name                     -- Name of the active block to append to
+  , blocks       :: Map.Map Name BlockState  -- Blocks for function
+  , symtab       :: SymbolTable              -- Function scope symbol table
+  , blockCount   :: Int                      -- Count of basic blocks
+  , count        :: Word                     -- Count of unnamed instructions
+  , names        :: Names                    -- Name Supply
+  } deriving Show
+
+data BlockState
+  = BlockState {
+    idx   :: Int                            -- Block index
+  , stack :: [Named Instruction]            -- Stack of instructions
+  , term  :: Maybe (Named Terminator)       -- Block terminator
+  } deriving Show
+
+-------------------------------------------------------------------------------
+-- Codegen Operations
+-------------------------------------------------------------------------------
+
+newtype Codegen a = Codegen { runCodegen :: State CodegenState a }
+  deriving (Functor, Applicative, Monad, MonadState CodegenState )
+
+sortBlocks :: [(Name, BlockState)] -> [(Name, BlockState)]
+sortBlocks = sortBy (compare `on` (idx . snd))
+
+createBlocks :: CodegenState -> [BasicBlock]
+createBlocks m = map makeBlock $ sortBlocks $ Map.toList (blocks m)
+
+makeBlock :: (Name, BlockState) -> BasicBlock
+makeBlock (l, (BlockState _ s t)) = BasicBlock l s (maketerm t)
+  where
+    maketerm (Just x) = x
+    maketerm Nothing = error $ "Block has no terminator: " ++ (show l)
+
+entryBlockName :: String
+entryBlockName = "entry"
 
 emptyBlock :: Int -> BlockState
 emptyBlock i = BlockState i [] Nothing
 
+emptyCodegen :: CodegenState
+emptyCodegen = CodegenState (Name entryBlockName) Map.empty [] 1 0 Map.empty
+
+execCodegen :: Codegen a -> CodegenState
+execCodegen m = execState (runCodegen m) emptyCodegen
+
+fresh :: Codegen Word
+fresh = do
+  i <- gets count
+  modify $ \s -> s { count = 1 + i }
+  return $ i + 1
+
+instr :: Instruction -> Codegen (Operand)
+instr ins = do
+  n <- fresh
+  let ref = (UnName n)
+  blk <- current
+  let i = stack blk
+  modifyBlock (blk { stack = i ++ [ref := ins] } )
+  return $ local ref
+
+terminator :: Named Terminator -> Codegen (Named Terminator)
+terminator trm = do
+  blk <- current
+  modifyBlock (blk { term = Just trm })
+  return trm
+
+-------------------------------------------------------------------------------
+-- Block Stack
+-------------------------------------------------------------------------------
+
+entry :: Codegen Name
+entry = gets currentBlock
+
 addBlock :: String -> Codegen Name
-addBlock blockName = do
-  blks <- gets blocks
+addBlock bname = do
+  bls <- gets blocks
   ix <- gets blockCount
   nms <- gets names
-
   let new = emptyBlock ix
-      (qname, supply) = uniqueName blockName nms
-
-  modify $ \s -> s {
-    blocks = Map.insert (Name qname) new blks,
-    blockCount = ix + 1,
-    names = supply
-    }
-
+      (qname, supply) = uniqueName bname nms
+  modify $ \s -> s { blocks = Map.insert (Name qname) new bls
+                   , blockCount = ix + 1
+                   , names = supply
+                   }
   return (Name qname)
 
--- set a new current block to be worked on
 setBlock :: Name -> Codegen Name
 setBlock bname = do
   modify $ \s -> s { currentBlock = bname }
@@ -117,7 +191,6 @@ setBlock bname = do
 getBlock :: Codegen Name
 getBlock = gets currentBlock
 
--- add instructions to current block
 modifyBlock :: BlockState -> Codegen ()
 modifyBlock new = do
   active <- gets currentBlock
@@ -131,81 +204,60 @@ current = do
     Just x -> return x
     Nothing -> error $ "No such block: " ++ show c
 
--- get a fresh name for an instruction
-fresh :: Codegen Word
-fresh = do
-  i <- gets count
-  modify $ \s -> s { count = 1 + i }
-  return $ i + 1
+-------------------------------------------------------------------------------
+-- Symbol Table
+-------------------------------------------------------------------------------
 
-type Names = Map.Map String Int
+assign :: String -> Operand -> Codegen ()
+assign var x = do
+  lcls <- gets symtab
+  modify $ \s -> s { symtab = [(var, x)] ++ lcls }
 
--- get a unique name for an instruction
-uniqueName :: String -> Names -> (String, Names)
-uniqueName nm ns =
-  case Map.lookup nm ns of
-    Nothing -> (nm, Map.insert nm 1 ns)
-    Just ix -> (nm ++ show ix, Map.insert nm (ix + 1) ns)
+getvar :: String -> Codegen Operand
+getvar var = do
+  syms <- gets symtab
+  case lookup var syms of
+    Just x  -> return x
+    Nothing -> error $ "Local variable not in scope: " ++ show var
 
-instance IsString Name where
-  fromString = Name . fromString
+-------------------------------------------------------------------------------
 
-local :: Name -> Operand
+-- References
+local ::  Name -> Operand
 local = LocalReference
+
+global ::  Name -> C.Constant
+global = C.GlobalReference
 
 externf :: Name -> Operand
 externf = ConstantOperand . C.GlobalReference
 
-
--------------
--- Sym table
--------------
-assign :: String -> Operand -> Codegen ()
-assign var x = do
-  locals <- gets symtab
-  modify $ \s -> s { symtab = [(var, x)] ++ locals }
-
-getvar :: String -> Codegen Operand
-getvar nm = do
-  syms <- gets symtab
-  case lookup nm syms of
-    Just x -> return x
-    Nothing -> error $ "Undefined variable: " ++ show nm
-
-instr :: Instruction -> Codegen Operand
-instr ins = do
-  freshName <- fresh
-  block <- current
-  let i = stack block
-  let ref = UnName freshName
-  modifyBlock $ block { stack = i ++ [ref := ins] }
-  return (local ref)
-
-terminator :: Named Terminator -> Codegen (Named Terminator)
-terminator trm = do
-  block <- current
-  modifyBlock $ block { term = Just trm }
-  return trm
-
-
--------------
--- Arith
--------------
+-- Arithmetic and Constants
 fadd :: Operand -> Operand -> Codegen Operand
-fadd l r = instr $ FAdd l r []
+fadd a b = instr $ FAdd a b []
 
 fsub :: Operand -> Operand -> Codegen Operand
-fsub l r = instr $ FSub l r []
+fsub a b = instr $ FSub a b []
 
 fmul :: Operand -> Operand -> Codegen Operand
-fmul l r = instr $ FMul l r []
+fmul a b = instr $ FMul a b []
 
 fdiv :: Operand -> Operand -> Codegen Operand
-fdiv l r = instr $ FDiv l r []
+fdiv a b = instr $ FDiv a b []
+
+fcmp :: FP.FloatingPointPredicate -> Operand -> Operand -> Codegen Operand
+fcmp cond a b = instr $ FCmp cond a b []
+
+cons :: C.Constant -> Operand
+cons = ConstantOperand
+
+uitofp :: Type -> Operand -> Codegen Operand
+uitofp ty a = instr $ UIToFP a ty []
 
 toArgs :: [Operand] -> [(Operand, [A.ParameterAttribute])]
 toArgs = map (\x -> (x, []))
 
+-- Effects
 call :: Operand -> [Operand] -> Codegen Operand
 call fn args = instr $ Call False CC.C [] (Right fn) (toArgs args) [] []
 
@@ -218,7 +270,7 @@ store ptr val = instr $ Store False ptr val Nothing 0 []
 load :: Operand -> Codegen Operand
 load ptr = instr $ Load False ptr Nothing 0 []
 
--- Control flow
+-- Control Flow
 br :: Name -> Codegen (Named Terminator)
 br val = terminator $ Do $ Br val []
 
