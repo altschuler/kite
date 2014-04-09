@@ -11,7 +11,7 @@ $alpha			= [$downcase $upcase]
 $alphaNum		= [$alpha $digit]
 $symbols		= [\(\)\{\}\[\]\;\,\:]
 
-@keywords		= return | import | if | then | else | yolo
+@keywords		= return | import | if | then | else | yolo | print
 @binops	                = "+" | "-" | "/" | "*" | "%" | "==" | "<" | "<=" | ">" | ">=" | "!="
 @operators		= "=" | "#" | "->" | "|" | "`"
 @string                 = \" (. # \")* \"

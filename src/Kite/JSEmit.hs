@@ -2,6 +2,7 @@ module Kite.JSEmit where
 
 import Control.Monad.State
 import Data.List
+import System.Environment
 
 import Kite.Parser
 
@@ -14,7 +15,7 @@ emit src (PInteger val) = show val
 emit src (PFunc (PFuncType params tRet) body) =
   let params' = concatMap (\p -> case p of
                               PTypeArg _ (PIdentifier ide) -> ide) params
-  in src ++ "function(" ++ params' ++ ") {" ++ emit "" body ++ "}"
+  in src ++ "function(" ++  params' ++ ") {" ++ emit "" body ++ "}"
 
 emit src (PAssign (PIdentifier ide) expr) =
   src ++ ide ++ " = " ++ emit src expr ++ ";"
@@ -32,4 +33,7 @@ emit src (PIdentifier ide) = ide
 
 emit src (PCall expr args) =
   let args' = map (emit "") args
-  in emit "" expr ++ "(" ++ (intercalate "," args') ++ ");"
+  in emit "" expr ++ "(" ++ (intercalate "," args') ++ ")"
+
+emit src (PPrint (PIdentifier ide)) =
+  src ++ "console.log(" ++ ide ++ ");"

@@ -1,0 +1,6 @@
+foo = |x| -> {
+    return x + 2
+}
+
+a = 2 + foo(2)
+print a

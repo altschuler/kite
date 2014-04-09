@@ -28,6 +28,7 @@ main = do
   KiteArgs {..} <- cmdArgsRun kiteArgs
 
   inp <- if eval then return input else readFile input
+  run <- readFile "src/Kite/runtime.js"
 
   let tokens = Kt.lex inp
   when lexOutput (prettyPrint tokens)
@@ -37,4 +38,5 @@ main = do
 
   either print (const $ print "Type check passed") (Kt.analyze debugOutput ast)
   print (Kjs.emit "" ast)
+  writeFile "examples/jsoutput.js" (run ++ Kjs.emit "" ast)
     where prettyPrint = putStrLn . ppShow

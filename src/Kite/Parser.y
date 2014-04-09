@@ -38,6 +38,7 @@ import Text.Printf
         then               { TKeyword _ "then" }
         else               { TKeyword _ "else" }
         yolo               { TKeyword _ "yolo" }
+        print              { TKeyword _ "print" }
 
         '='                { TOperator _ "=" }
         '#'                { TOperator _ "#" }
@@ -86,6 +87,7 @@ Expr   :: { Expr }
         | Index            { $1 }
         | Term             { $1 }
         | '(' Expr ')'     { $2 }
+        | Print            { $1 }
 
 Exprs  :: { [Expr] }
 Exprs   : {- nothing -}    { [] }
@@ -126,6 +128,7 @@ BinOp  :: { Expr }
         | Expr '>=' Expr { PCall (PIdentifier ">=") [$1, $3] }
         | Expr '!=' Expr { PCall (PIdentifier "!=") [$1, $3] }
 
+
 Type   :: { Type }
         : boolTy           { PBoolType }
         | intTy            { PIntegerType }
@@ -140,6 +143,8 @@ If     :: { Expr }
         : if Expr then Expr else Expr    { PIf $2 $4 $6 }
         | if Expr then StandardBlock else StandardBlock  { PIf $2 $4 $6 }
 
+Print  :: { Expr }
+        : print Expr                     { PPrint $2}
 -- functions
 Func   :: { Expr }
         : FuncSignature FuncBlock        { PFunc $1 $2 }
@@ -197,6 +202,7 @@ data Expr = PList [Expr]
           | PCall Expr [Expr] -- PIdentifier!
           | PReturn Expr
           | PIndex Expr Expr
+          | PPrint Expr
 
           | PInteger Int
           | PFloat Float
